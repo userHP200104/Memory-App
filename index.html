@@ -1,326 +1,457 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Upload, Loader2, RotateCcw, Plus, Trash2 } from 'lucide-react';
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Memorize App</title>
+    
+    <!-- PWA Meta Tags -->
+    <meta name="theme-color" content="#000000">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Memorize">
+    <link id="manifest-link" rel="manifest" href="">
 
-const fileToBase64 = (file) => new Promise((resolve, reject) => {
-  const reader = new FileReader();
-  reader.readAsDataURL(file);
-  reader.onload = () => resolve(reader.result.split(',')[1]);
-  reader.onerror = error => reject(error);
-});
-
-const isRomanNumeral = (word) => {
-  const cleanWord = word.replace(/[^a-zA-Z]/g, '').toUpperCase();
-  if (!cleanWord) return false;
-  return /^(?=[MDCLXVI])M*(C[MD]|D?C{0,3})(X[CL]|L?X{0,3})(I[XV]|V?I{0,3})$/.test(cleanWord);
-};
-
-const isNumber = (word) => /\d/.test(word);
-
-// Helper to convert word to just its first letter while preserving case and punctuation
-const getAbbreviation = (word) => {
-  if (isRomanNumeral(word) || isNumber(word)) return word;
-
-  const match = word.match(/[a-zA-Z]/);
-  if (!match) return word; 
-
-  const letter = match[0]; // Preserve original case
-  const letterIndex = word.indexOf(match[0]);
-  
-  const prefix = word.substring(0, letterIndex);
-  
-  // Capture punctuation at the very end of the word
-  const trailing = word.match(/[.,!?;:'"()\]]+$/);
-  const suffix = trailing ? trailing[0] : '';
-  
-  return prefix + letter + suffix;
-};
-
-// Retry logic for robust API calls
-async function fetchWithRetry(url, options, retries = 3, delay = 1000) {
-  for (let i = 0; i < retries; i++) {
-    try {
-      const response = await fetch(url, options);
-      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-      return await response.json();
-    } catch (e) {
-      if (i === retries - 1) throw e;
-      await new Promise(res => setTimeout(res, delay * Math.pow(2, i)));
-    }
-  }
-}
-
-export default function App() {
-  const [imageUrls, setImageUrls] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-  
-  // Initialize textBlocks from localStorage to act as a PWA
-  const [textBlocks, setTextBlocks] = useState(() => {
-    const saved = localStorage.getItem('memorize_blocks');
-    return saved ? JSON.parse(saved) : [];
-  });
-  
-  const [revealedWords, setRevealedWords] = useState({});
-  const [revealedSentences, setRevealedSentences] = useState({});
-  
-  const fileInputRef = useRef(null);
-
-  // Save to local storage whenever textBlocks changes
-  useEffect(() => {
-    localStorage.setItem('memorize_blocks', JSON.stringify(textBlocks));
-  }, [textBlocks]);
-
-  const handleUpload = async (event) => {
-    const files = Array.from(event.target.files || []);
-    if (files.length === 0) return;
-
-    const urls = files.map(file => URL.createObjectURL(file));
-    setImageUrls(urls);
-    setLoading(true);
-    setError(null);
-    setTextBlocks([]);
-    setRevealedWords({});
-    setRevealedSentences({});
-
-    try {
-      const base64Promises = files.map(fileToBase64);
-      const base64Datas = await Promise.all(base64Promises);
-      
-      const parts = [
-        { text: "Analyze the images and extract all text in reading order. Separate it into logical blocks. Determine if each block is a 'heading', 'paragraph', or 'list_item'. For paragraphs and list_items, extract an array of 'sentences', and for each sentence, provide an array of 'words' in that sentence. Keep punctuation attached to the respective words (e.g. 'Hello,'). Do not separate punctuation into its own word unless it stands alone. IMPORTANT: If the text contains instructions to repeat a previous section, such as '(repeat from posture 6 #i-iii)', you MUST resolve this reference by finding 'posture 6' (or the referenced section) in the document and replacing the '(repeat...)' instruction with the actual text of that section. Expand all such repeat references fully." }
-      ];
-
-      files.forEach((file, index) => {
-        parts.push({
-          inlineData: { mimeType: file.type, data: base64Datas[index] }
-        });
-      });
-
-      const payload = {
-        contents: [{
-          role: "user",
-          parts: parts
-        }],
-        generationConfig: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: "OBJECT",
-            properties: {
-              blocks: {
-                type: "ARRAY",
-                items: {
-                  type: "OBJECT",
-                  properties: {
-                    type: { type: "STRING", description: "Either 'heading', 'paragraph', or 'list_item'" },
-                    text: { type: "STRING", description: "Full text if it's a heading" },
-                    sentences: {
-                      type: "ARRAY",
-                      description: "List of sentences if it's a paragraph or list_item",
-                      items: {
-                        type: "ARRAY",
-                        description: "List of words in the sentence",
-                        items: { type: "STRING" }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <style>
+        body {
+            background-color: #000000;
+            color: #e5e5e5;
+            font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            -webkit-tap-highlight-color: transparent;
         }
-      };
+        
+        /* Hide scrollbar for cleaner look */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #000; 
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #333; 
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #555; 
+        }
+    </style>
+</head>
+<body class="min-h-screen pb-24 selection:bg-gray-800">
+    
+    <!-- App Container -->
+    <div id="app" class="w-full"></div>
 
-      const apiKey = ""; // API key is injected automatically by Canvas
-      const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
+    <script>
+        // === App State ===
+        let textBlocks = [];
+        let imageUrls = [];
+        let loading = false;
+        let error = null;
+        let revealedWords = {};
+        let revealedSentences = {};
 
-      const result = await fetchWithRetry(apiUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
+        // Load data from LocalStorage
+        try {
+            const saved = localStorage.getItem('memorize_blocks');
+            if (saved) {
+                textBlocks = JSON.parse(saved);
+            }
+        } catch (e) {
+            console.error("Failed to load from local storage", e);
+        }
 
-      const textContent = result?.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (!textContent) throw new Error("No text content returned from API.");
+        // Save data to LocalStorage
+        function saveState() {
+            localStorage.setItem('memorize_blocks', JSON.stringify(textBlocks));
+        }
 
-      const parsedJson = JSON.parse(textContent);
-      if (parsedJson && parsedJson.blocks) {
-        setTextBlocks(parsedJson.blocks);
-      } else {
-        throw new Error("Invalid format received from Gemini.");
-      }
-    } catch (err) {
-      console.error(err);
-      setError("Failed to process image. Make sure the image contains readable text.");
-    } finally {
-      setLoading(false);
-    }
-  };
+        // === Helper Functions ===
+        const escapeHTML = (str) => {
+            return str.replace(/[&<>'"]/g, 
+                tag => ({
+                    '&': '&amp;',
+                    '<': '&lt;',
+                    '>': '&gt;',
+                    "'": '&#39;',
+                    '"': '&quot;'
+                }[tag])
+            );
+        };
 
-  const toggleWord = (bIdx, sIdx, wIdx) => {
-    setRevealedWords(prev => ({
-      ...prev,
-      [`${bIdx}-${sIdx}-${wIdx}`]: !prev[`${bIdx}-${sIdx}-${wIdx}`]
-    }));
-  };
+        const isRomanNumeral = (word) => {
+            const cleanWord = word.replace(/[^a-zA-Z]/g, '').toUpperCase();
+            if (!cleanWord) return false;
+            return /^(?=[MDCLXVI])M*(C[MD]|D?C{0,3})(X[CL]|L?X{0,3})(I[XV]|V?I{0,3})$/.test(cleanWord);
+        };
 
-  const toggleSentence = (bIdx, sIdx) => {
-    setRevealedSentences(prev => ({
-      ...prev,
-      [`${bIdx}-${sIdx}`]: !prev[`${bIdx}-${sIdx}`]
-    }));
-  };
+        const isNumber = (word) => /\d/.test(word);
 
-  const resetReveals = () => {
-    setRevealedWords({});
-    setRevealedSentences({});
-  };
+        const getAbbreviation = (word) => {
+            if (isRomanNumeral(word) || isNumber(word)) return word;
 
-  const clearData = () => {
-    setTextBlocks([]);
-    setImageUrls([]);
-    resetReveals();
-    localStorage.removeItem('memorize_blocks');
-  };
+            const match = word.match(/[a-zA-Z]/);
+            if (!match) return word; 
 
-  return (
-    <div className="min-h-screen bg-black text-[#e5e5e5] pb-24 font-sans w-full selection:bg-gray-800">
-      
-      {/* View Mode: Text Blocks Exist */}
-      {textBlocks.length > 0 && !loading && (
-        <div className="w-full max-w-4xl mx-auto px-6 pt-12 md:px-12 md:pt-16 pb-12">
-          
-          <div className="space-y-8">
-            {textBlocks.map((block, bIdx) => {
-              
-              if (block.type === 'heading') {
-                return (
-                  <h2 key={bIdx} className="text-3xl md:text-4xl font-extrabold text-white mt-12 mb-6 uppercase tracking-wide">
-                    {block.text}
-                  </h2>
-                );
-              }
+            const letter = match[0]; 
+            const letterIndex = word.indexOf(match[0]);
+            
+            const prefix = word.substring(0, letterIndex);
+            
+            const trailing = word.match(/[.,!?;:'"()\]]+$/);
+            const suffix = trailing ? trailing[0] : '';
+            
+            return prefix + letter + suffix;
+        };
 
-              if ((block.type === 'paragraph' || block.type === 'list_item') && block.sentences) {
-                return (
-                  <div key={bIdx} className={`text-xl md:text-2xl leading-[1.6] font-bold tracking-wide ${block.type === 'list_item' ? 'pl-4 md:pl-8 mb-4' : 'mb-6'}`}>
-                    {block.sentences.map((sentence, sIdx) => {
-                      const isSentRevealed = revealedSentences[`${bIdx}-${sIdx}`];
-                      
-                      return (
-                        <div key={sIdx} className="inline-block mr-3 mb-2">
-                          {sentence.map((word, wIdx) => {
-                            const isWordRevealed = isSentRevealed || revealedWords[`${bIdx}-${sIdx}-${wIdx}`];
+        const fileToBase64 = (file) => new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.readAsDataURL(file);
+            reader.onload = () => resolve(reader.result.split(',')[1]);
+            reader.onerror = error => reject(error);
+        });
+
+        async function fetchWithRetry(url, options, retries = 3, delay = 1000) {
+            for (let i = 0; i < retries; i++) {
+                try {
+                    const response = await fetch(url, options);
+                    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                    return await response.json();
+                } catch (e) {
+                    if (i === retries - 1) throw e;
+                    await new Promise(res => setTimeout(res, delay * Math.pow(2, i)));
+                }
+            }
+        }
+
+        // === Actions ===
+        function toggleWord(bIdx, sIdx, wIdx) {
+            const key = `${bIdx}-${sIdx}-${wIdx}`;
+            revealedWords[key] = !revealedWords[key];
+            render();
+        }
+
+        function toggleSentence(bIdx, sIdx) {
+            const key = `${bIdx}-${sIdx}`;
+            revealedSentences[key] = !revealedSentences[key];
+            render();
+        }
+
+        function resetReveals() {
+            revealedWords = {};
+            revealedSentences = {};
+            render();
+        }
+
+        function clearData() {
+            textBlocks = [];
+            imageUrls = [];
+            revealedWords = {};
+            revealedSentences = {};
+            localStorage.removeItem('memorize_blocks');
+            render();
+        }
+
+        function triggerFileInput() {
+            document.getElementById('hidden-file-input').click();
+        }
+
+        async function handleUpload(event) {
+            const files = Array.from(event.target.files || []);
+            if (files.length === 0) return;
+
+            imageUrls = files.map(file => URL.createObjectURL(file));
+            loading = true;
+            error = null;
+            textBlocks = [];
+            revealedWords = {};
+            revealedSentences = {};
+            render();
+
+            try {
+                const base64Promises = files.map(fileToBase64);
+                const base64Datas = await Promise.all(base64Promises);
+                
+                const parts = [
+                    { text: "Analyze the images and extract all text in reading order. Separate it into logical blocks. Determine if each block is a 'heading', 'paragraph', or 'list_item'. For paragraphs and list_items, extract an array of 'sentences', and for each sentence, provide an array of 'words' in that sentence. Keep punctuation attached to the respective words (e.g. 'Hello,'). Do not separate punctuation into its own word unless it stands alone. IMPORTANT: If the text contains instructions to repeat a previous section, such as '(repeat from posture 6 #i-iii)', you MUST resolve this reference by finding 'posture 6' (or the referenced section) in the document and replacing the '(repeat...)' instruction with the actual text of that section. Expand all such repeat references fully." }
+                ];
+
+                files.forEach((file, index) => {
+                    parts.push({
+                        inlineData: { mimeType: file.type, data: base64Datas[index] }
+                    });
+                });
+
+                const payload = {
+                    contents: [{ role: "user", parts: parts }],
+                    generationConfig: {
+                        responseMimeType: "application/json",
+                        responseSchema: {
+                            type: "OBJECT",
+                            properties: {
+                                blocks: {
+                                    type: "ARRAY",
+                                    items: {
+                                        type: "OBJECT",
+                                        properties: {
+                                            type: { type: "STRING", description: "Either 'heading', 'paragraph', or 'list_item'" },
+                                            text: { type: "STRING", description: "Full text if it's a heading" },
+                                            sentences: {
+                                                type: "ARRAY",
+                                                description: "List of sentences if it's a paragraph or list_item",
+                                                items: {
+                                                    type: "ARRAY",
+                                                    description: "List of words in the sentence",
+                                                    items: { type: "STRING" }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                };
+
+                const apiKey = ""; // API key is injected automatically by Canvas
+                const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
+
+                const result = await fetchWithRetry(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                const textContent = result?.candidates?.[0]?.content?.parts?.[0]?.text;
+                if (!textContent) throw new Error("No text content returned from API.");
+
+                const parsedJson = JSON.parse(textContent);
+                if (parsedJson && parsedJson.blocks) {
+                    textBlocks = parsedJson.blocks;
+                    saveState();
+                } else {
+                    throw new Error("Invalid format received from Gemini.");
+                }
+            } catch (err) {
+                console.error(err);
+                error = "Failed to process image. Make sure the image contains readable text.";
+            } finally {
+                loading = false;
+                // Reset input value so same files can be re-selected if needed
+                if (document.getElementById('hidden-file-input')) {
+                    document.getElementById('hidden-file-input').value = '';
+                }
+                render();
+            }
+        }
+
+        function getUploadViewHTML() {
+            let html = `
+                <div class="w-full max-w-2xl mx-auto px-6 pt-24 space-y-12 flex flex-col items-center justify-center min-h-[80vh]">
+                    <div class="text-center space-y-4">
+                        <h1 class="text-4xl md:text-5xl font-extrabold text-white tracking-widest uppercase">
+                            Memorize
+                        </h1>
+                        <p class="text-gray-400 font-medium max-w-md mx-auto">
+                            Upload study material. We'll strip it down to first letters so you can test your memory.
+                        </p>
+                    </div>
+
+                    <div class="w-full">
+                        <input 
+                            type="file" 
+                            accept="image/*" 
+                            multiple
+                            class="hidden" 
+                            id="hidden-file-input" 
+                            onchange="handleUpload(event)"
+                        />
+            `;
+
+            if (!loading) {
+                html += `
+                        <div 
+                            onclick="triggerFileInput()"
+                            class="border border-[#333] bg-[#0a0a0a] rounded-2xl p-16 cursor-pointer hover:border-white transition-all flex flex-col items-center justify-center space-y-6 group"
+                        >
+                            <div class="bg-[#1a1a1a] p-5 rounded-full group-hover:bg-white group-hover:text-black transition-colors">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-400 group-hover:text-black"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                            </div>
+                            <div class="text-center">
+                                <p class="font-bold text-xl text-white tracking-wide uppercase">Select Images</p>
+                                <p class="text-sm text-gray-500 mt-2 font-semibold tracking-wider">SUPPORT MULTIPLE FILES</p>
+                            </div>
+                        </div>
+                `;
+            } else {
+                html += `
+                        <div class="flex flex-col items-center justify-center space-y-6 py-16 border border-[#222] bg-[#0a0a0a] rounded-2xl">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="animate-spin text-white"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                            <p class="font-bold text-xl tracking-wider text-gray-300 uppercase animate-pulse">
+                                Extracting Text...
+                            </p>
+                        </div>
+                `;
+            }
+
+            if (error) {
+                html += `
+                        <div class="mt-6 border border-red-900 bg-red-950/20 text-red-400 p-6 rounded-xl text-center w-full font-semibold tracking-wide">
+                            <p>${escapeHTML(error)}</p>
+                        </div>
+                `;
+            }
+
+            html += `</div></div>`;
+            return html;
+        }
+
+        function getDocumentViewHTML() {
+            let html = `<div class="w-full max-w-4xl mx-auto px-6 pt-12 md:px-12 md:pt-16 pb-12"><div class="space-y-8">`;
+
+            textBlocks.forEach((block, bIdx) => {
+                if (block.type === 'heading') {
+                    html += `<h2 class="text-3xl md:text-4xl font-extrabold text-white mt-12 mb-6 uppercase tracking-wide">${escapeHTML(block.text || '')}</h2>`;
+                }
+
+                if ((block.type === 'paragraph' || block.type === 'list_item') && block.sentences) {
+                    const paddingClass = block.type === 'list_item' ? 'pl-4 md:pl-8 mb-4' : 'mb-6';
+                    html += `<div class="text-xl md:text-2xl leading-[1.6] font-bold tracking-wide ${paddingClass}">`;
+
+                    block.sentences.forEach((sentence, sIdx) => {
+                        const sentKey = `${bIdx}-${sIdx}`;
+                        const isSentRevealed = revealedSentences[sentKey];
+                        
+                        html += `<div class="inline-block mr-3 mb-2">`;
+
+                        sentence.forEach((word, wIdx) => {
+                            const wordKey = `${bIdx}-${sIdx}-${wIdx}`;
+                            const isWordRevealed = isSentRevealed || revealedWords[wordKey];
                             const displayWord = isWordRevealed ? word : getAbbreviation(word);
                             
-                            return (
-                              <React.Fragment key={wIdx}>
-                                <span
-                                  onClick={() => toggleWord(bIdx, sIdx, wIdx)}
-                                  className={`cursor-pointer transition-colors select-none ${
-                                    isWordRevealed 
-                                      ? 'text-white' 
-                                      : 'text-[#d4d4d4] hover:text-white'
-                                  }`}
-                                >
-                                  {displayWord}
-                                </span>
-                                {' '}
-                              </React.Fragment>
-                            );
-                          })}
-                          
-                          {/* Subtle Sentence Reveal Toggle (Tap next to sentence) */}
-                          <span 
-                            onClick={() => toggleSentence(bIdx, sIdx)}
-                            className="inline-flex items-center justify-center w-8 h-8 ml-1 cursor-pointer opacity-30 hover:opacity-100 transition-opacity align-middle text-gray-500 hover:text-white select-none"
-                            title={isSentRevealed ? "Hide Sentence" : "Reveal Sentence"}
-                          >
-                            <span className="block w-2 h-2 rounded-full bg-current"></span>
-                          </span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                );
-              }
-              return null;
-            })}
-          </div>
-          
-          {/* Floating Action Menu for Document View */}
-          <div className="fixed bottom-6 right-6 md:bottom-12 md:right-12 flex gap-3">
-             <button 
-              onClick={resetReveals}
-              className="bg-[#1a1a1a] hover:bg-[#2a2a2a] text-white p-4 rounded-full shadow-2xl transition-all border border-[#333]"
-              title="Reset Reveals"
-            >
-              <RotateCcw size={24} />
-            </button>
-            <button 
-              onClick={clearData}
-              className="bg-white hover:bg-gray-200 text-black p-4 rounded-full shadow-2xl transition-all"
-              title="Clear & Upload New"
-            >
-              <Plus size={24} />
-            </button>
-          </div>
-        </div>
-      )}
+                            const colorClass = isWordRevealed ? 'text-white' : 'text-[#d4d4d4] hover:text-white';
 
-      {/* Upload Mode: No Text Blocks */}
-      {textBlocks.length === 0 && (
-        <div className="w-full max-w-2xl mx-auto px-6 pt-24 space-y-12 flex flex-col items-center justify-center min-h-[80vh]">
-          
-          <div className="text-center space-y-4">
-            <h1 className="text-4xl md:text-5xl font-extrabold text-white tracking-widest uppercase">
-              Memorize
-            </h1>
-            <p className="text-gray-400 font-medium max-w-md mx-auto">
-              Upload study material. We'll strip it down to first letters so you can test your memory.
-            </p>
-          </div>
+                            html += `<span data-action="toggle-word" data-bidx="${bIdx}" data-sidx="${sIdx}" data-widx="${wIdx}" class="cursor-pointer transition-colors select-none ${colorClass}">${escapeHTML(displayWord)}</span> `;
+                        });
 
-          <div className="w-full">
-            <input 
-              type="file" 
-              accept="image/*" 
-              multiple
-              className="hidden" 
-              ref={fileInputRef} 
-              onChange={handleUpload}
-            />
-            
-            {!loading ? (
-              <div 
-                onClick={() => fileInputRef.current?.click()}
-                className="border border-[#333] bg-[#0a0a0a] rounded-2xl p-16 cursor-pointer hover:border-white transition-all flex flex-col items-center justify-center space-y-6 group"
-              >
-                <div className="bg-[#1a1a1a] p-5 rounded-full group-hover:bg-white group-hover:text-black transition-colors">
-                  <Upload size={36} className="text-gray-400 group-hover:text-black" />
+                        // Subtle Sentence Reveal Toggle (Tap next to sentence)
+                        html += `
+                            <span data-action="toggle-sentence" data-bidx="${bIdx}" data-sidx="${sIdx}" class="inline-flex items-center justify-center w-8 h-8 ml-1 cursor-pointer opacity-30 hover:opacity-100 transition-opacity align-middle text-gray-500 hover:text-white select-none" title="${isSentRevealed ? 'Hide Sentence' : 'Reveal Sentence'}">
+                                <span class="block w-2 h-2 rounded-full bg-current pointer-events-none"></span>
+                            </span>
+                        </div>`;
+                    });
+
+                    html += `</div>`;
+                }
+            });
+
+            html += `</div>`; // End space-y-8
+
+            // Floating Action Menu
+            html += `
+                <div class="fixed bottom-6 right-6 md:bottom-12 md:right-12 flex gap-3">
+                    <button data-action="reset" class="bg-[#1a1a1a] hover:bg-[#2a2a2a] text-white p-4 rounded-full shadow-2xl transition-all border border-[#333]" title="Reset Reveals">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="pointer-events-none"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+                    </button>
+                    <button data-action="clear" class="bg-white hover:bg-gray-200 text-black p-4 rounded-full shadow-2xl transition-all" title="Clear & Upload New">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="pointer-events-none"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    </button>
                 </div>
-                <div className="text-center">
-                  <p className="font-bold text-xl text-white tracking-wide uppercase">Select Images</p>
-                  <p className="text-sm text-gray-500 mt-2 font-semibold tracking-wider">SUPPORT MULTIPLE FILES</p>
-                </div>
-              </div>
-            ) : (
-              <div className="flex flex-col items-center justify-center space-y-6 py-16 border border-[#222] bg-[#0a0a0a] rounded-2xl">
-                <Loader2 size={48} className="animate-spin text-white" />
-                <p className="font-bold text-xl tracking-wider text-gray-300 uppercase animate-pulse">
-                  Extracting Text...
-                </p>
-              </div>
-            )}
+            `;
+
+            html += `</div>`;
+            return html;
+        }
+
+        function render() {
+            const appDiv = document.getElementById('app');
             
-            {error && (
-              <div className="mt-6 border border-red-900 bg-red-950/20 text-red-400 p-6 rounded-xl text-center w-full font-semibold tracking-wide">
-                <p>{error}</p>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
+            if (textBlocks.length > 0 && !loading) {
+                appDiv.innerHTML = getDocumentViewHTML();
+            } else {
+                appDiv.innerHTML = getUploadViewHTML();
+            }
+        }
+
+        // Use Event Delegation for better performance and simpler DOM management
+        document.getElementById('app').addEventListener('click', (e) => {
+            const target = e.target.closest('[data-action]');
+            if (!target) return;
+
+            const action = target.dataset.action;
+            
+            if (action === 'toggle-word') {
+                toggleWord(target.dataset.bidx, target.dataset.sidx, target.dataset.widx);
+            } 
+            else if (action === 'toggle-sentence') {
+                toggleSentence(target.dataset.bidx, target.dataset.sidx);
+            }
+            else if (action === 'reset') {
+                resetReveals();
+            }
+            else if (action === 'clear') {
+                clearData();
+            }
+        });
+
+        // Initialize App
+        render();
+
+        // Dynamically inject a manifest and ServiceWorker to make it a standalone PWA via a single file
+        const setupPWA = () => {
+            // 1. Generate Manifest Blob
+            const manifest = {
+                "name": "Memorize Text",
+                "short_name": "Memorize",
+                "start_url": "./",
+                "display": "standalone",
+                "background_color": "#000000",
+                "theme_color": "#000000",
+                "description": "An app to help you memorize text.",
+                "icons": [{
+                    "src": "data:image/svg+xml;charset=utf-8," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512"><rect width="512" height="512" fill="black"/><text x="50%" y="50%" font-family="sans-serif" font-weight="bold" font-size="300" fill="white" text-anchor="middle" dominant-baseline="central">M</text></svg>'),
+                    "sizes": "512x512",
+                    "type": "image/svg+xml"
+                }]
+            };
+            
+            const manifestString = JSON.stringify(manifest);
+            const manifestBlob = new Blob([manifestString], {type: 'application/json'});
+            const manifestUrl = URL.createObjectURL(manifestBlob);
+            document.getElementById('manifest-link').href = manifestUrl;
+
+            // 2. Inline Service Worker for Offline Capabilities
+            if ('serviceWorker' in navigator) {
+                const swCode = `
+                    self.addEventListener('install', (e) => {
+                        self.skipWaiting();
+                    });
+                    self.addEventListener('activate', (e) => {
+                        e.waitUntil(self.clients.claim());
+                    });
+                    self.addEventListener('fetch', (e) => {
+                        // Pass through, but allows the browser to recognize it as a valid PWA
+                        e.respondWith(fetch(e.request).catch(() => new Response("App is Offline.")));
+                    });
+                `;
+                const swBlob = new Blob([swCode], { type: 'application/javascript' });
+                const swUrl = URL.createObjectURL(swBlob);
+                
+                navigator.serviceWorker.register(swUrl).then(registration => {
+                    console.log('PWA ServiceWorker registered successfully!');
+                }).catch(err => {
+                    console.log('PWA ServiceWorker registration failed: ', err);
+                });
+            }
+        };
+
+        // Run PWA setup
+        setupPWA();
+
+    </script>
+</body>
+</html>
 
