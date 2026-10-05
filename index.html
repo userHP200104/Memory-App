@@ -1,0 +1,326 @@
+import React, { useState, useRef, useEffect } from 'react';
+import { Upload, Loader2, RotateCcw, Plus, Trash2 } from 'lucide-react';
+
+const fileToBase64 = (file) => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.readAsDataURL(file);
+  reader.onload = () => resolve(reader.result.split(',')[1]);
+  reader.onerror = error => reject(error);
+});
+
+const isRomanNumeral = (word) => {
+  const cleanWord = word.replace(/[^a-zA-Z]/g, '').toUpperCase();
+  if (!cleanWord) return false;
+  return /^(?=[MDCLXVI])M*(C[MD]|D?C{0,3})(X[CL]|L?X{0,3})(I[XV]|V?I{0,3})$/.test(cleanWord);
+};
+
+const isNumber = (word) => /\d/.test(word);
+
+// Helper to convert word to just its first letter while preserving case and punctuation
+const getAbbreviation = (word) => {
+  if (isRomanNumeral(word) || isNumber(word)) return word;
+
+  const match = word.match(/[a-zA-Z]/);
+  if (!match) return word; 
+
+  const letter = match[0]; // Preserve original case
+  const letterIndex = word.indexOf(match[0]);
+  
+  const prefix = word.substring(0, letterIndex);
+  
+  // Capture punctuation at the very end of the word
+  const trailing = word.match(/[.,!?;:'"()\]]+$/);
+  const suffix = trailing ? trailing[0] : '';
+  
+  return prefix + letter + suffix;
+};
+
+// Retry logic for robust API calls
+async function fetchWithRetry(url, options, retries = 3, delay = 1000) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      const response = await fetch(url, options);
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      return await response.json();
+    } catch (e) {
+      if (i === retries - 1) throw e;
+      await new Promise(res => setTimeout(res, delay * Math.pow(2, i)));
+    }
+  }
+}
+
+export default function App() {
+  const [imageUrls, setImageUrls] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  
+  // Initialize textBlocks from localStorage to act as a PWA
+  const [textBlocks, setTextBlocks] = useState(() => {
+    const saved = localStorage.getItem('memorize_blocks');
+    return saved ? JSON.parse(saved) : [];
+  });
+  
+  const [revealedWords, setRevealedWords] = useState({});
+  const [revealedSentences, setRevealedSentences] = useState({});
+  
+  const fileInputRef = useRef(null);
+
+  // Save to local storage whenever textBlocks changes
+  useEffect(() => {
+    localStorage.setItem('memorize_blocks', JSON.stringify(textBlocks));
+  }, [textBlocks]);
+
+  const handleUpload = async (event) => {
+    const files = Array.from(event.target.files || []);
+    if (files.length === 0) return;
+
+    const urls = files.map(file => URL.createObjectURL(file));
+    setImageUrls(urls);
+    setLoading(true);
+    setError(null);
+    setTextBlocks([]);
+    setRevealedWords({});
+    setRevealedSentences({});
+
+    try {
+      const base64Promises = files.map(fileToBase64);
+      const base64Datas = await Promise.all(base64Promises);
+      
+      const parts = [
+        { text: "Analyze the images and extract all text in reading order. Separate it into logical blocks. Determine if each block is a 'heading', 'paragraph', or 'list_item'. For paragraphs and list_items, extract an array of 'sentences', and for each sentence, provide an array of 'words' in that sentence. Keep punctuation attached to the respective words (e.g. 'Hello,'). Do not separate punctuation into its own word unless it stands alone. IMPORTANT: If the text contains instructions to repeat a previous section, such as '(repeat from posture 6 #i-iii)', you MUST resolve this reference by finding 'posture 6' (or the referenced section) in the document and replacing the '(repeat...)' instruction with the actual text of that section. Expand all such repeat references fully." }
+      ];
+
+      files.forEach((file, index) => {
+        parts.push({
+          inlineData: { mimeType: file.type, data: base64Datas[index] }
+        });
+      });
+
+      const payload = {
+        contents: [{
+          role: "user",
+          parts: parts
+        }],
+        generationConfig: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: "OBJECT",
+            properties: {
+              blocks: {
+                type: "ARRAY",
+                items: {
+                  type: "OBJECT",
+                  properties: {
+                    type: { type: "STRING", description: "Either 'heading', 'paragraph', or 'list_item'" },
+                    text: { type: "STRING", description: "Full text if it's a heading" },
+                    sentences: {
+                      type: "ARRAY",
+                      description: "List of sentences if it's a paragraph or list_item",
+                      items: {
+                        type: "ARRAY",
+                        description: "List of words in the sentence",
+                        items: { type: "STRING" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      };
+
+      const apiKey = ""; // API key is injected automatically by Canvas
+      const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
+
+      const result = await fetchWithRetry(apiUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      const textContent = result?.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!textContent) throw new Error("No text content returned from API.");
+
+      const parsedJson = JSON.parse(textContent);
+      if (parsedJson && parsedJson.blocks) {
+        setTextBlocks(parsedJson.blocks);
+      } else {
+        throw new Error("Invalid format received from Gemini.");
+      }
+    } catch (err) {
+      console.error(err);
+      setError("Failed to process image. Make sure the image contains readable text.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const toggleWord = (bIdx, sIdx, wIdx) => {
+    setRevealedWords(prev => ({
+      ...prev,
+      [`${bIdx}-${sIdx}-${wIdx}`]: !prev[`${bIdx}-${sIdx}-${wIdx}`]
+    }));
+  };
+
+  const toggleSentence = (bIdx, sIdx) => {
+    setRevealedSentences(prev => ({
+      ...prev,
+      [`${bIdx}-${sIdx}`]: !prev[`${bIdx}-${sIdx}`]
+    }));
+  };
+
+  const resetReveals = () => {
+    setRevealedWords({});
+    setRevealedSentences({});
+  };
+
+  const clearData = () => {
+    setTextBlocks([]);
+    setImageUrls([]);
+    resetReveals();
+    localStorage.removeItem('memorize_blocks');
+  };
+
+  return (
+    <div className="min-h-screen bg-black text-[#e5e5e5] pb-24 font-sans w-full selection:bg-gray-800">
+      
+      {/* View Mode: Text Blocks Exist */}
+      {textBlocks.length > 0 && !loading && (
+        <div className="w-full max-w-4xl mx-auto px-6 pt-12 md:px-12 md:pt-16 pb-12">
+          
+          <div className="space-y-8">
+            {textBlocks.map((block, bIdx) => {
+              
+              if (block.type === 'heading') {
+                return (
+                  <h2 key={bIdx} className="text-3xl md:text-4xl font-extrabold text-white mt-12 mb-6 uppercase tracking-wide">
+                    {block.text}
+                  </h2>
+                );
+              }
+
+              if ((block.type === 'paragraph' || block.type === 'list_item') && block.sentences) {
+                return (
+                  <div key={bIdx} className={`text-xl md:text-2xl leading-[1.6] font-bold tracking-wide ${block.type === 'list_item' ? 'pl-4 md:pl-8 mb-4' : 'mb-6'}`}>
+                    {block.sentences.map((sentence, sIdx) => {
+                      const isSentRevealed = revealedSentences[`${bIdx}-${sIdx}`];
+                      
+                      return (
+                        <div key={sIdx} className="inline-block mr-3 mb-2">
+                          {sentence.map((word, wIdx) => {
+                            const isWordRevealed = isSentRevealed || revealedWords[`${bIdx}-${sIdx}-${wIdx}`];
+                            const displayWord = isWordRevealed ? word : getAbbreviation(word);
+                            
+                            return (
+                              <React.Fragment key={wIdx}>
+                                <span
+                                  onClick={() => toggleWord(bIdx, sIdx, wIdx)}
+                                  className={`cursor-pointer transition-colors select-none ${
+                                    isWordRevealed 
+                                      ? 'text-white' 
+                                      : 'text-[#d4d4d4] hover:text-white'
+                                  }`}
+                                >
+                                  {displayWord}
+                                </span>
+                                {' '}
+                              </React.Fragment>
+                            );
+                          })}
+                          
+                          {/* Subtle Sentence Reveal Toggle (Tap next to sentence) */}
+                          <span 
+                            onClick={() => toggleSentence(bIdx, sIdx)}
+                            className="inline-flex items-center justify-center w-8 h-8 ml-1 cursor-pointer opacity-30 hover:opacity-100 transition-opacity align-middle text-gray-500 hover:text-white select-none"
+                            title={isSentRevealed ? "Hide Sentence" : "Reveal Sentence"}
+                          >
+                            <span className="block w-2 h-2 rounded-full bg-current"></span>
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              }
+              return null;
+            })}
+          </div>
+          
+          {/* Floating Action Menu for Document View */}
+          <div className="fixed bottom-6 right-6 md:bottom-12 md:right-12 flex gap-3">
+             <button 
+              onClick={resetReveals}
+              className="bg-[#1a1a1a] hover:bg-[#2a2a2a] text-white p-4 rounded-full shadow-2xl transition-all border border-[#333]"
+              title="Reset Reveals"
+            >
+              <RotateCcw size={24} />
+            </button>
+            <button 
+              onClick={clearData}
+              className="bg-white hover:bg-gray-200 text-black p-4 rounded-full shadow-2xl transition-all"
+              title="Clear & Upload New"
+            >
+              <Plus size={24} />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Upload Mode: No Text Blocks */}
+      {textBlocks.length === 0 && (
+        <div className="w-full max-w-2xl mx-auto px-6 pt-24 space-y-12 flex flex-col items-center justify-center min-h-[80vh]">
+          
+          <div className="text-center space-y-4">
+            <h1 className="text-4xl md:text-5xl font-extrabold text-white tracking-widest uppercase">
+              Memorize
+            </h1>
+            <p className="text-gray-400 font-medium max-w-md mx-auto">
+              Upload study material. We'll strip it down to first letters so you can test your memory.
+            </p>
+          </div>
+
+          <div className="w-full">
+            <input 
+              type="file" 
+              accept="image/*" 
+              multiple
+              className="hidden" 
+              ref={fileInputRef} 
+              onChange={handleUpload}
+            />
+            
+            {!loading ? (
+              <div 
+                onClick={() => fileInputRef.current?.click()}
+                className="border border-[#333] bg-[#0a0a0a] rounded-2xl p-16 cursor-pointer hover:border-white transition-all flex flex-col items-center justify-center space-y-6 group"
+              >
+                <div className="bg-[#1a1a1a] p-5 rounded-full group-hover:bg-white group-hover:text-black transition-colors">
+                  <Upload size={36} className="text-gray-400 group-hover:text-black" />
+                </div>
+                <div className="text-center">
+                  <p className="font-bold text-xl text-white tracking-wide uppercase">Select Images</p>
+                  <p className="text-sm text-gray-500 mt-2 font-semibold tracking-wider">SUPPORT MULTIPLE FILES</p>
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center space-y-6 py-16 border border-[#222] bg-[#0a0a0a] rounded-2xl">
+                <Loader2 size={48} className="animate-spin text-white" />
+                <p className="font-bold text-xl tracking-wider text-gray-300 uppercase animate-pulse">
+                  Extracting Text...
+                </p>
+              </div>
+            )}
+            
+            {error && (
+              <div className="mt-6 border border-red-900 bg-red-950/20 text-red-400 p-6 rounded-xl text-center w-full font-semibold tracking-wide">
+                <p>{error}</p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
